@@ -133,9 +133,9 @@ to_xml(#testsuite{ errors = E, tests = T, testcases = Cases }) ->
 to_xml(TestSuites) when is_list(TestSuites) ->
     ["<testsuites>",[to_xml(TestSuite) || TestSuite <- TestSuites],"</testsuites>"].
 
-sanitize([$<|T]) ->
-    "&gt;" ++ sanitize(T);
 sanitize([$>|T]) ->
+    "&gt;" ++ sanitize(T);
+sanitize([$<|T]) ->
     "&lt;" ++ sanitize(T);
 sanitize([H|T]) ->
     [H|sanitize(T)];
