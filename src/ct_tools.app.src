@@ -1,0 +1,13 @@
+{application, ct_tools,
+ [
+  {description, "A collection of Common Test tools"},
+  {vsn, "0.0.1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+		  test_server,
+		  common_test
+                 ]},
+  {env, []}
+ ]}.
