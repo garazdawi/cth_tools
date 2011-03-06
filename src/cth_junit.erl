@@ -29,7 +29,6 @@
 		 test_cases = [],
 		 test_suites = [] }).
 
--record(failure, { message, type, text}).
 -record(testcase, { classname, name, time, failure }).
 -record(testsuite, { errors, failures, hostname, name, tests,
 		     time, timestamp, id, package,
@@ -100,22 +99,11 @@ get_suite(TCs) ->
     Fail = Total - Succ,
     #testsuite{ errors = Fail, tests = Total, testcases = TCs }.
     
-%%-record(testsuite, { errors, failures, hostname, name, tests,
-%%		     time, timestamp, id, package,
-%%		     properties, testcases }).
-
 terminate(State) -> 
-  %  ct:pal("Writng file! ~p",[State]),
     {ok,D} = file:open(State#state.filepath,[write]),
-    R = (catch io:format(D, to_xml(State#state.test_suites), [])),
+    io:format(D, to_xml(State#state.test_suites), []),
     catch file:sync(D),
-    R2 = (catch file:close(D)),
-   % ct:pal("Done wrting! ~p\n~p",[R,R2]).
-    ok.
-
-get_curr_log_dir(Config) ->
-    filename:join([proplists:get_value(priv_dir, Config), ".."]).
-
+    catch file:close(D).
 
 to_xml(#testcase{ classname = CL, name = N, time = T, failure = F}) ->
     ["<testcase classname=\"",CL,"\" name=\"",N,"\" time=\"",T,"\">",
