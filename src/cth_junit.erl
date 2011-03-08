@@ -22,10 +22,12 @@
 -export([post_end_per_testcase/4]).
 
 -export([on_tc_fail/3]).
+-export([on_tc_skip/3]).
 
 -export([terminate/1]).
 
 -record(state, { filepath, curr_suite, curr_group = [], curr_tc, curr_log_dir,
+		 timer,
 		 test_cases = [],
 		 test_suites = [] }).
 
@@ -42,53 +44,67 @@ init(Path, _Opts) ->
     #state{ filepath = Path }.
 
 pre_init_per_suite(Suite,Config,State) ->
-    {Config, State#state{ curr_suite = Suite } }.
+    {Config, init_tc(State#state{ curr_suite = Suite }) }.
 
 post_init_per_suite(_Suite,_Config, Result, State) ->
-    {Result, add_tc(init_per_suite,Result,State)}.
+    {Result, end_tc(init_per_suite,Result,State)}.
 
-pre_end_per_suite(_Suite,Config,State) -> {Config, State}.
+pre_end_per_suite(_Suite,Config,State) -> {Config, init_tc(State)}.
 
 post_end_per_suite(_Suite,_Config,Result,State) -> 
-    NewState = add_tc(end_per_suite,Result,State),
+    NewState = end_tc(end_per_suite,Result,State),
     TCs = NewState#state.test_cases,
     Suite = get_suite(TCs),
     {Result, State#state{ test_cases = [], 
 			  test_suites = [Suite | State#state.test_suites]}}.
 
 pre_init_per_group(Group,Config,State) -> 
-    {Config, State#state{ curr_group = [Group|State#state.curr_group]}}.
+    {Config, init_tc(State#state{ curr_group = [Group|State#state.curr_group]})}.
 
 post_init_per_group(_Group,_Config,Result,State) -> 
-    {Result, add_tc(init_per_group,Result,State)}.
+    {Result, end_tc(init_per_group,Result,State)}.
 
-pre_end_per_group(_Group,Config,State) -> {Config, State}.
+pre_end_per_group(_Group,Config,State) -> {Config, init_tc(State)}.
 
 post_end_per_group(_Group,_Config,Result,State) -> 
-    NewState = add_tc(end_per_group, Result, State),
+    NewState = end_tc(end_per_group, Result, State),
     {Result, NewState#state{ curr_group = tl(NewState#state.curr_group)}}.
 
-pre_init_per_testcase(_TC,Config,State) -> {Config, State}.
+pre_init_per_testcase(_TC,Config,State) -> {Config, init_tc(State)}.
 
 post_end_per_testcase(TC,_Config,Result,State) -> 
-    {Result, add_tc(TC,Result,State)}.
+    {Result, end_tc(TC,Result,State)}.
 
 on_tc_fail(_TC, Res, State) ->
     TCs = State#state.test_cases,
     TC = hd(State#state.test_cases),
     NewTC = TC#testcase{ failure = 
-			     lists:flatten(io_lib:format("~p",[Res])) },
+			     {fail,lists:flatten(io_lib:format("~p",[Res]))} },
     State#state{ test_cases = [NewTC | tl(TCs)]}.
 
-add_tc(Func, Res, State) when is_atom(Func) ->
-    add_tc(atom_to_list(Func), Res, State);
-add_tc(Name, _Res, State = #state{ curr_suite = Suite,curr_group = Groups} ) ->
+on_tc_skip(_Tc, Res, State) ->
+    TCs = State#state.test_cases,
+    TC = hd(State#state.test_cases),
+    NewTC = TC#testcase{ 
+	      failure = 
+		  {skipped,lists:flatten(io_lib:format("~p",[Res]))} },
+    State#state{ test_cases = [NewTC | tl(TCs)]}.
+
+init_tc(State) ->
+    State#state{ timer = now() }.
+
+end_tc(Func, Res, State) when is_atom(Func) ->
+    end_tc(atom_to_list(Func), Res, State);
+end_tc(Name, _Res, State = #state{ curr_suite = Suite,
+				   curr_group = Groups, 
+				   timer = TS} ) ->
     ClassName = atom_to_list(Suite),
     PName = lists:flatten([ atom_to_list(Group) ++ "." || 
 			  Group <- lists:reverse(Groups)]) ++ Name,
+    TimeTakes = io_lib:format("~f",[timer:now_diff(now(),TS) / 1000000]),
     State#state{ test_cases = [#testcase{ classname = ClassName, 
 					  name = PName,
-					  time = "0",
+					  time = TimeTakes,
 					  failure = passed }| State#state.test_cases]}.
 
 get_suite(TCs) ->
@@ -107,12 +123,15 @@ terminate(State) ->
 
 to_xml(#testcase{ classname = CL, name = N, time = T, failure = F}) ->
     ["<testcase classname=\"",CL,"\" name=\"",N,"\" time=\"",T,"\">",
-     if
-	 F == passed ->
+     case F of
+	 passed ->
 	     [];
-	 true ->
+	 {skipped,Reason} ->
+	     ["<skipped type=\"skip\" message=\"Test ",N," in ",CL, 
+	      " skipped!\">", sanitize(Reason),"</skipped>"];
+	 {fail,Reason} ->
 	     ["<failure message=\"Test ",N," in ",CL," failed!\" type=\"crash\">",
-	      sanitize(F),"</failure>"]
+	      sanitize(Reason),"</failure>"]
      end,"</testcase>"];
 to_xml(#testsuite{ errors = E, tests = T, testcases = Cases }) ->
     ["<testsuite errors=\"",integer_to_list(E),"\" tests=\"",integer_to_list(T),"\">",

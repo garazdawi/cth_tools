@@ -61,6 +61,8 @@ end_per_group(_GroupName, _Config) ->
 %% Config0 = Config1 = [tuple()]
 %% Reason = term()
 %%--------------------------------------------------------------------
+init_per_testcase(skip_testcase, _Config) ->
+    {skip, "Do the skipping"};
 init_per_testcase(_TestCase, Config) ->
     Config.
 
@@ -98,7 +100,7 @@ groups() ->
 %% Reason = term()
 %%--------------------------------------------------------------------
 all() -> 
-    [my_test_case, {group, test1}].
+    [skip_testcase, my_test_case, {group, test1}].
 
 %%--------------------------------------------------------------------
 %% @spec TestCase() -> Info
@@ -116,4 +118,5 @@ my_test_case() ->
 %% Comment = term()
 %%--------------------------------------------------------------------
 my_test_case(_Config) -> 
+    timer:sleep(1234),
     ok.
