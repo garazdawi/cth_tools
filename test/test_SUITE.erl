@@ -62,7 +62,7 @@ end_per_group(_GroupName, _Config) ->
 %% Reason = term()
 %%--------------------------------------------------------------------
 init_per_testcase(skip_testcase, _Config) ->
-    {skip, "Do the skipping"};
+    {skip, ["Do the ","skipping"]};
 init_per_testcase(_TestCase, Config) ->
     Config.
 

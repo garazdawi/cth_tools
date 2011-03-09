@@ -144,6 +144,12 @@ sanitize([$>|T]) ->
     "&gt;" ++ sanitize(T);
 sanitize([$<|T]) ->
     "&lt;" ++ sanitize(T);
+sanitize([$"|T]) ->
+    "&#34;" ++ sanitize(T);
+sanitize([$'|T]) ->
+    "&apos;" ++ sanitize(T);
+sanitize([$&|T]) ->
+    "&amp;" ++ sanitize(T);
 sanitize([H|T]) ->
     [H|sanitize(T)];
 sanitize([]) ->
