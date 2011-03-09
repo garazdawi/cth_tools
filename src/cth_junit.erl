@@ -41,7 +41,7 @@ id(Opts) ->
 
 init(Path, _Opts) ->
     %dbg:tracer(),dbg:p(all,c),dbg:tpl(?MODULE,x),
-    #state{ filepath = Path }.
+    #state{ filepath = Path, timer = now() }.
 
 pre_init_per_suite(Suite,Config,State) ->
     {Config, init_tc(State#state{ curr_suite = Suite }) }.
