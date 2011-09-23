@@ -117,6 +117,7 @@ get_suite(TCs) ->
     
 terminate(State) -> 
     {ok,D} = file:open(State#state.filepath,[write]),
+    io:format(D, "<?xml version=\"1.0\" encoding= \"UTF-8\" ?>", []),
     io:format(D, to_xml(State#state.test_suites), []),
     catch file:sync(D),
     catch file:close(D).
@@ -145,7 +146,7 @@ sanitize([$>|T]) ->
 sanitize([$<|T]) ->
     "&lt;" ++ sanitize(T);
 sanitize([$"|T]) ->
-    "&#34;" ++ sanitize(T);
+    "&quot;" ++ sanitize(T);
 sanitize([$'|T]) ->
     "&apos;" ++ sanitize(T);
 sanitize([$&|T]) ->
