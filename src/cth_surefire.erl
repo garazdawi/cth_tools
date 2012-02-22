@@ -26,12 +26,13 @@
 
 -export([terminate/1]).
 
--record(state, { filepath, curr_suite, curr_group = [], curr_tc, curr_log_dir,
-		 timer,
+-record(state, { filepath, axis, properties, package, hostname,
+		 curr_suite, curr_suite_ts, curr_group = [], curr_tc, curr_log_dir,
+		 timer, tc_log, 
 		 test_cases = [],
 		 test_suites = [] }).
 
--record(testcase, { classname, name, time, failure }).
+-record(testcase, { log, group, classname, name, time, failure, timestamp }).
 -record(testsuite, { errors, failures, hostname, name, tests,
 		     time, timestamp, id, package,
 		     properties, testcases }).
@@ -39,41 +40,46 @@
 id(Opts) ->
     filename:absname(proplists:get_value(path, Opts, "junit_report.xml")).
 
-init(Path, _Opts) ->
+init(Path, Opts) ->
     %dbg:tracer(),dbg:p(all,c),dbg:tpl(?MODULE,x),
-    #state{ filepath = Path, timer = now() }.
+    #state{ filepath = Path, 
+	    hostname = proplists:get_value(hostname,Opts,string:strip(os:cmd("hostname"),right,$\n)),
+	    package = proplists:get_value(package,Opts),
+	    axis = proplists:get_value(axis,Opts,[]),
+	    properties = proplists:get_value(properties,Opts,[]),
+	    timer = now() }.
 
 pre_init_per_suite(Suite,Config,State) ->
-    {Config, init_tc(State#state{ curr_suite = Suite }) }.
+    {Config, init_tc(State#state{ curr_suite = Suite, curr_suite_ts = now() }, Config) }.
 
-post_init_per_suite(_Suite,_Config, Result, State) ->
-    {Result, end_tc(init_per_suite,Result,State)}.
+post_init_per_suite(_Suite,Config, Result, State) ->
+    {Result, end_tc(init_per_suite,Config,Result,State)}.
 
-pre_end_per_suite(_Suite,Config,State) -> {Config, init_tc(State)}.
+pre_end_per_suite(_Suite,Config,State) -> {Config, init_tc(State, Config)}.
 
-post_end_per_suite(_Suite,_Config,Result,State) -> 
-    NewState = end_tc(end_per_suite,Result,State),
+post_end_per_suite(_Suite,Config,Result,State) -> 
+    NewState = end_tc(end_per_suite,Config,Result,State),
     TCs = NewState#state.test_cases,
-    Suite = get_suite(TCs),
+    Suite = get_suite(NewState, TCs),
     {Result, State#state{ test_cases = [], 
 			  test_suites = [Suite | State#state.test_suites]}}.
 
 pre_init_per_group(Group,Config,State) -> 
-    {Config, init_tc(State#state{ curr_group = [Group|State#state.curr_group]})}.
+    {Config, init_tc(State#state{ curr_group = [Group|State#state.curr_group]}, Config)}.
 
-post_init_per_group(_Group,_Config,Result,State) -> 
-    {Result, end_tc(init_per_group,Result,State)}.
+post_init_per_group(_Group,Config,Result,State) -> 
+    {Result, end_tc(init_per_group,Config,Result,State)}.
 
-pre_end_per_group(_Group,Config,State) -> {Config, init_tc(State)}.
+pre_end_per_group(_Group,Config,State) -> {Config, init_tc(State, Config)}.
 
-post_end_per_group(_Group,_Config,Result,State) -> 
-    NewState = end_tc(end_per_group, Result, State),
+post_end_per_group(_Group,Config,Result,State) -> 
+    NewState = end_tc(end_per_group, Config, Result, State),
     {Result, NewState#state{ curr_group = tl(NewState#state.curr_group)}}.
 
-pre_init_per_testcase(_TC,Config,State) -> {Config, init_tc(State)}.
+pre_init_per_testcase(_TC,Config,State) -> {Config, init_tc(State, Config)}.
 
-post_end_per_testcase(TC,_Config,Result,State) -> 
-    {Result, end_tc(TC,Result,State)}.
+post_end_per_testcase(TC,Config,Result,State) -> 
+    {Result, end_tc(TC,Config, Result,State)}.
 
 on_tc_fail(_TC, Res, State) ->
     TCs = State#state.test_cases,
@@ -90,40 +96,52 @@ on_tc_skip(_Tc, Res, State) ->
 		  {skipped,lists:flatten(io_lib:format("~p",[Res]))} },
     State#state{ test_cases = [NewTC | tl(TCs)]}.
 
-init_tc(State) ->
-    State#state{ timer = now() }.
+init_tc(State, Config) ->
+    State#state{ timer = now(), tc_log =  proplists:get_value(tc_logfile, Config)}.
 
-end_tc(Func, Res, State) when is_atom(Func) ->
-    end_tc(atom_to_list(Func), Res, State);
-end_tc(Name, _Res, State = #state{ curr_suite = Suite,
-				   curr_group = Groups, 
-				   timer = TS} ) ->
+end_tc(Func, Config, Res, State) when is_atom(Func) ->
+    end_tc(atom_to_list(Func), Config, Res, State);
+end_tc(Name, _Config, _Res, State = #state{ curr_suite = Suite,
+					    curr_group = Groups, 
+					    timer = TS, tc_log = Log } ) ->
     ClassName = atom_to_list(Suite),
-    PName = lists:flatten([ atom_to_list(Group) ++ "." || 
-			  Group <- lists:reverse(Groups)]) ++ Name,
+    PGroup = string:join([ atom_to_list(Group)|| 
+			     Group <- lists:reverse(Groups)],"."),
     TimeTakes = io_lib:format("~f",[timer:now_diff(now(),TS) / 1000000]),
-    State#state{ test_cases = [#testcase{ classname = ClassName, 
-					  name = PName,
+    State#state{ test_cases = [#testcase{ log = Log,
+					  timestamp = now_to_string(TS),
+					  classname = ClassName, 
+					  group = PGroup,
+					  name = Name,
 					  time = TimeTakes,
 					  failure = passed }| State#state.test_cases]}.
 
-get_suite(TCs) ->
+get_suite(State, TCs) ->
     Total = length(TCs),
     Succ = length(lists:filter(fun(#testcase{ failure = F }) ->
 				       F == passed
 			       end,TCs)),
     Fail = Total - Succ,
-    #testsuite{ errors = Fail, tests = Total, testcases = TCs }.
+    TimeTakes = io_lib:format("~f",[timer:now_diff(now(),State#state.curr_suite_ts) / 1000000]),
+    #testsuite{ name = atom_to_list(State#state.curr_suite), package = State#state.package, 
+		time = TimeTakes,
+		timestamp = now_to_string(State#state.curr_suite_ts),
+		errors = Fail, tests = Total, testcases = TCs }.
     
 terminate(State) -> 
     {ok,D} = file:open(State#state.filepath,[write]),
     io:format(D, "<?xml version=\"1.0\" encoding= \"UTF-8\" ?>", []),
-    io:format(D, to_xml(State#state.test_suites), []),
+    io:format(D, to_xml(State), []),
     catch file:sync(D),
     catch file:close(D).
 
-to_xml(#testcase{ classname = CL, name = N, time = T, failure = F}) ->
-    ["<testcase classname=\"",CL,"\" name=\"",N,"\" time=\"",T,"\">",
+to_xml(#testcase{ group = Group, classname = CL, log = L, name = N, time = T, timestamp = TS, failure = F}) ->
+    ["<testcase ",
+     [["group=\"",Group,"\""]||Group /= ""]," "
+     "name=\"",N,"\" "
+     "time=\"",T,"\" "
+     "timestamp=\"",TS,"\" "
+     "log=\"",L,"\">",
      case F of
 	 passed ->
 	     [];
@@ -134,12 +152,27 @@ to_xml(#testcase{ classname = CL, name = N, time = T, failure = F}) ->
 	     ["<failure message=\"Test ",N," in ",CL," failed!\" type=\"crash\">",
 	      sanitize(Reason),"</failure>"]
      end,"</testcase>"];
-to_xml(#testsuite{ errors = E, tests = T, testcases = Cases }) ->
-    ["<testsuite errors=\"",integer_to_list(E),"\" tests=\"",integer_to_list(T),"\">",
+to_xml(#testsuite{ package = P, hostname = H, errors = E, time = Time, timestamp = TS,
+		   tests = T, name = N, testcases = Cases }) ->
+    ["<testsuite ",
+     [["package=\"",P,"\" "]||P /= undefined],
+     [["hostname=\"",P,"\" "]||H /= undefined],
+     [["name=\"",N,"\" "]||N /= undefined],
+     [["time=\"",Time,"\" "]||Time /= undefined],
+     [["timestamp=\"",TS,"\" "]||TS /= undefined],
+     "errors=\"",integer_to_list(E),"\" "
+     "tests=\"",integer_to_list(T),"\">",
      [to_xml(Case) || Case <- Cases],
      "</testsuite>"];
-to_xml(TestSuites) when is_list(TestSuites) ->
-    ["<testsuites>",[to_xml(TestSuite) || TestSuite <- TestSuites],"</testsuites>"].
+to_xml(#state{ test_suites = TestSuites, axis = Axis, properties = Props }) ->
+    ["<testsuites>",properties_to_xml(Axis,Props),[to_xml(TestSuite) || TestSuite <- TestSuites],"</testsuites>"].
+
+properties_to_xml(Axis,Props) ->
+    ["<properties>",
+     [["<property name=\"",Name,"\" axis=\"yes\" value=\"",Value,"\" />"] || {Name,Value} <- Axis],
+     [["<property name=\"",Name,"\" value=\"",Value,"\" />"] || {Name,Value} <- Props],
+     "</properties>"
+    ].
 
 sanitize([$>|T]) ->
     "&gt;" ++ sanitize(T);
@@ -156,6 +189,11 @@ sanitize([H|T]) ->
 sanitize([]) ->
     [].
 
+now_to_string(Now) ->
+    {{YY,MM,DD},{HH,Mi,SS}} = calendar:now_to_local_time(Now),
+    io_lib:format("~p-~s-~sT~s:~s:~s",[YY,adj(MM),adj(DD),adj(HH),adj(Mi),adj(SS)]).
+adj(Int) ->
+    string:right(integer_to_list(Int), 2, $0).
 
 example_xml() ->
     "<testsuites>"
